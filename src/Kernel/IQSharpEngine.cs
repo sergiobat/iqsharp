@@ -28,7 +28,7 @@ namespace Microsoft.Quantum.IQSharp.Kernel
     /// </summary>
     public class IQSharpEngine : BaseEngine
     {
-        private readonly PerformanceMonitor performanceMonitor;
+        private readonly IPerformanceMonitor performanceMonitor;
 
         /// <summary>
         /// The main constructor. It expects an `ISnippets` instance that takes care
@@ -40,7 +40,7 @@ namespace Microsoft.Quantum.IQSharp.Kernel
             ILogger<IQSharpEngine> logger,
             IServiceProvider services,
             IConfigurationSource configurationSource,
-            PerformanceMonitor performanceMonitor,
+            IPerformanceMonitor performanceMonitor,
             IShellRouter shellRouter,
             IEventService eventService,
             IMagicSymbolResolver magicSymbolResolver,
@@ -48,7 +48,17 @@ namespace Microsoft.Quantum.IQSharp.Kernel
         ) : base(shell, shellRouter, context, logger, services)
         {
             this.performanceMonitor = performanceMonitor;
-            performanceMonitor.Start();
+            performanceMonitor.EnableBackgroundReporting = true;
+            performanceMonitor.OnKernelPerformanceAvailable += (source, args) =>
+            {
+                logger.LogInformation(
+                    "Estimated RAM usage:" +
+                    "\n\tManaged: {Managed} bytes" +
+                    "\n\tTotal:   {Total} bytes",
+                    args.ManagedRamUsed,
+                    args.TotalRamUsed
+                );
+            };
 
             this.Snippets = services.GetService<ISnippets>();
             this.SymbolsResolver = services.GetService<ISymbolResolver>();
