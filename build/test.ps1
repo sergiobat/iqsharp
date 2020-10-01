@@ -39,7 +39,7 @@ function Test-One {
 
         dotnet test $project `
             -c $Env:BUILD_CONFIGURATION `
-            -v $Env:BUILD_VERBOSITY `
+            -v diag `
             --no-build `
             --logger trx `
             --filter $_ `
@@ -113,7 +113,7 @@ function Test-JavaScript {
     }
 }
 
-Test-One '../iqsharp.sln' @("AzureClient", "IQSharpEngine", "Workspace")
+Test-One (Join-Path $PSScriptRoot '../iqsharp.sln') @("AzureClient", "IQSharpEngine", "Workspace")
 
 if ($Env:ENABLE_PYTHON -eq "false") {
     Write-Host "##vso[task.logissue type=warning;]Skipping Testing Python packages. Env:ENABLE_PYTHON was set to 'false'."
