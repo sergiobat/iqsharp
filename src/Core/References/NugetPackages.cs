@@ -199,7 +199,7 @@ namespace Microsoft.Quantum.IQSharp
         public async Task Add(PackageIdentity pkgId, Action<string>? statusCallback = null)
         {
             // Already added:
-            if (Items.Contains(pkgId)) return;
+            if (Items.Contains(pkgId) || IsIQSharpPackage(pkgId)) return;
 
             using (var sourceCacheContext = new SourceCacheContext())
             {
