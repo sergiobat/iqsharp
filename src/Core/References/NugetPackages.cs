@@ -199,7 +199,7 @@ namespace Microsoft.Quantum.IQSharp
         public async Task Add(PackageIdentity pkgId, Action<string>? statusCallback = null)
         {
             // Already added:
-            if (Items.Contains(pkgId) || IsIQSharpPackage(pkgId)) return;
+            if (Items.Contains(pkgId)) return;
 
             using (var sourceCacheContext = new SourceCacheContext())
             {
@@ -475,7 +475,7 @@ namespace Microsoft.Quantum.IQSharp
             SourceCacheContext context,
             ISet<SourcePackageDependencyInfo> dependencies)
         {
-            if (dependencies.Contains(package)) return;
+            if (dependencies.Contains(package) || IsIQSharpPackage(package)) return;
 
             foreach (var repo in this.Repositories)
             {
