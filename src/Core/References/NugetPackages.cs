@@ -232,14 +232,22 @@ namespace Microsoft.Quantum.IQSharp
             pkg.Id.StartsWith("Microsoft.Win32", StringComparison.InvariantCultureIgnoreCase);
 
         /// <summary>
+        /// Identifies packages that are part of IQ# itself.
+        /// These packages will not be downloaded nor will we try to get their list of assemblies,
+        /// since their assemblies should already be present in the IQ# installation.
+        /// </summary>
+        private static bool IsIQSharpPackage(PackageIdentity pkg) =>
+            pkg.Id.StartsWith("Microsoft.Quantum.IQSharp", StringComparison.InvariantCultureIgnoreCase);
+
+        /// <summary>
         /// Downloads and extracts a package into the GlobalPackages folder.
         /// </summary>
         public async Task DownloadPackages(SourceCacheContext context, IEnumerable<SourcePackageDependencyInfo> packagesToInstall, Action<string>? statusCallback = null)
         {
             foreach (var pkg in packagesToInstall)
             {
-                // Ignore all SDK packages:
-                if (IsSystemPackage(pkg)) continue;
+                // Ignore all SDK and IQ# packages:
+                if (IsSystemPackage(pkg) || IsIQSharpPackage(pkg)) continue;
 
                 if (!IsInstalled(pkg))
                 {
