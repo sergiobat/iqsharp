@@ -111,7 +111,7 @@ namespace Microsoft.Quantum.IQSharp
             return loader.VerifiedCompilation.Tokenization.Values
                 .SelectMany(tokens => tokens.SelectMany(fragments => fragments))
                 .Where(fragment => fragment.Kind != null && fragment.Kind.IsOpenDirective)
-                .Select(fragment => ((QsFragmentKind.OpenDirective)fragment.Kind))
+                .Select(fragment => ((QsFragmentKind.OpenDirective)fragment.Kind!))
                 .Where(openDirective => !string.IsNullOrEmpty(openDirective.Item1.Symbol?.AsDeclarationName(null)))
                 .ToDictionary(
                     openDirective => openDirective.Item1.Symbol.AsDeclarationName(null),
@@ -219,7 +219,9 @@ namespace Microsoft.Quantum.IQSharp
 
             // Ignore any @EntryPoint() attributes found in libraries.
             logger.ErrorCodesToIgnore.Add(QsCompiler.Diagnostics.ErrorCode.EntryPointInLibrary);
+            logger.WarningCodesToIgnore.Add(QsCompiler.Diagnostics.WarningCode.EntryPointInLibrary);
             var qsCompilation = this.UpdateCompilation(sources, metadata.QsMetadatas, logger, compileAsExecutable, executionTarget, runtimeCapabilities);
+            logger.WarningCodesToIgnore.Remove(QsCompiler.Diagnostics.WarningCode.EntryPointInLibrary);
             logger.ErrorCodesToIgnore.Remove(QsCompiler.Diagnostics.ErrorCode.EntryPointInLibrary);
 
             if (logger.HasErrors) return null;
