@@ -1,0 +1,46 @@
+##
+# Test IQ# with Selenium.
+# Windows build agents have ChromeWebDriver and GeckoWebDriver pre-installed.
+##
+
+steps:
+
+##
+# Pre-reqs
+##
+- pwsh: Write-Host "##vso[task.prependpath]$env:CONDA\Scripts"
+  displayName: "Add conda to PATH"
+
+- pwsh: conda create -n selenium-env -y python=3.7 pip setuptools pytest jupyter_client=6.1.7 notebook=6.1.1 selenium=3.141
+  displayName: "Create conda environment"
+
+- task: UseDotNet@2
+  displayName: 'Use .NET Core SDK 3.1.100'
+  inputs:
+    packageType: sdk
+    version: '3.1.100'
+
+- pwsh: ./bootstrap.ps1
+  displayName: "Bootstrap"
+  workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+##
+# Install IQ# kernel
+##
+- script: |
+    call activate selenium-env
+    call conda info
+    dotnet run -c %BUILD_CONFIGURATION% -- install --user
+  displayName: "Installing IQ#"
+  workingDirectory: '$(System.DefaultWorkingDirectory)/src/Tool'
+
+##
+# Test
+##
+- script: |
+    call activate selenium-env
+    call conda info
+    start jupyter notebook --no-browser --NotebookApp.base_url=test/path
+    pytest -v ./test-selenium.py
+  displayName: "Running Selenium tests"
+  workingDirectory: '$(System.DefaultWorkingDirectory)/build'
