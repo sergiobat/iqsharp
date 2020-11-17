@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+﻿// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 #if TELEMETRY
@@ -83,6 +83,12 @@ namespace Microsoft.Quantum.IQSharp
                     engine.MagicExecuted += (_, info) => TelemetryLogger.LogEvent(info.AsTelemetryEvent());
                     engine.HelpExecuted += (_, info) => TelemetryLogger.LogEvent(info.AsTelemetryEvent());
                 }
+            };
+
+            eventService.OnServiceInitialized<IPerformanceMonitor>().On += (performanceMonitor) =>
+            {
+                performanceMonitor.OnSimulatorPerformanceAvailable += (_, info) => TelemetryLogger.LogEvent(info.AsTelemetryEvent());
+                performanceMonitor.OnKernelPerformanceAvailable += (_, info) => TelemetryLogger.LogEvent(info.AsTelemetryEvent());
             };
         }
 
@@ -226,6 +232,27 @@ namespace Microsoft.Quantum.IQSharp
             evt.SetProperty("Kind".WithTelemetryNamespace(), info.Symbol?.Kind.ToString());
             evt.SetProperty("Status".WithTelemetryNamespace(), info.Result.Status.ToString());
             evt.SetProperty("Duration".WithTelemetryNamespace(), info.Duration.ToString());
+
+            return evt;
+        }
+
+        public static EventProperties AsTelemetryEvent(this SimulatorPerformanceArgs info)
+        {
+            var evt = new EventProperties() { Name = "SimulatorPerformance".WithTelemetryNamespace() };
+
+            evt.SetProperty("SimulatorName".WithTelemetryNamespace(), info.SimulatorName);
+            evt.SetProperty("NQubits".WithTelemetryNamespace(), info.NQubits);
+            evt.SetProperty("Duration".WithTelemetryNamespace(), info.Duration.ToString());
+
+            return evt;
+        }
+
+        public static EventProperties AsTelemetryEvent(this KernelPerformanceArgs info)
+        {
+            var evt = new EventProperties() { Name = "KernelPerformance".WithTelemetryNamespace() };
+
+            evt.SetProperty("ManagedRamUsed".WithTelemetryNamespace(), info.ManagedRamUsed);
+            evt.SetProperty("TotalRamUsed".WithTelemetryNamespace(), info.TotalRamUsed);
 
             return evt;
         }
