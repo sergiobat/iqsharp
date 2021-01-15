@@ -27,10 +27,17 @@ namespace Tests.IQSharp
     [TestClass]
     public class IQSharpEngineTests
     {
+        // We want to make sure that tests that exercise the %debug magic
+        // do not run at the same time, since they each check the list of IOPub
+        // messages going back and forth to the rest of the kernel.
+        private object debugTestLock = new object();
         public IQSharpEngine Init(string workspace = "Workspace")
         {
             var engine = Startup.Create<IQSharpEngine>(workspace);
-            engine.Workspace.Initialization.Wait();
+            engine.Start();
+            engine.Initialized.Wait();
+            Assert.IsNotNull(engine.Workspace);
+            engine.Workspace!.Initialization.Wait();
             return engine;
         }
 
@@ -46,7 +53,7 @@ namespace Tests.IQSharp
             foreach (var m in channel.msgs) Console.WriteLine($"  {m}");
         }
 
-        public static async Task<string> AssertCompile(IQSharpEngine engine, string source, params string[] expectedOps)
+        public static async Task<string?> AssertCompile(IQSharpEngine engine, string source, params string[] expectedOps)
         {
             var channel = new MockChannel();
             var response = await engine.ExecuteMundane(source, channel);
@@ -57,10 +64,12 @@ namespace Tests.IQSharp
             return response.Output?.ToString();
         }
 
-        public static async Task<string> AssertSimulate(IQSharpEngine engine, string snippetName, params string[] messages)
+        public static async Task<string?> AssertSimulate(IQSharpEngine engine, string snippetName, params string[] messages)
         {
+            await engine.Initialized;
             var configSource = new ConfigurationSource(skipLoading: true);
-            var simMagic = new SimulateMagic(engine.SymbolsResolver, configSource);
+
+            var simMagic = new SimulateMagic(engine.SymbolsResolver!, configSource);
             var channel = new MockChannel();
             var response = await simMagic.Execute(snippetName, channel);
             PrintResult(response, channel);
@@ -70,17 +79,20 @@ namespace Tests.IQSharp
             return response.Output?.ToString();
         }
 
-        public static async Task<string> AssertEstimate(IQSharpEngine engine, string snippetName, params string[] messages)
+        public static async Task<string?> AssertEstimate(IQSharpEngine engine, string snippetName, params string[] messages)
         {
+            await engine.Initialized;
+            Assert.IsNotNull(engine.SymbolsResolver);
+
             var channel = new MockChannel();
-            var estimateMagic = new EstimateMagic(engine.SymbolsResolver);
+            var estimateMagic = new EstimateMagic(engine.SymbolsResolver!);
             var response = await estimateMagic.Execute(snippetName, channel);
             var result = response.Output as DataTable;
             PrintResult(response, channel);
             Assert.AreEqual(ExecuteStatus.Ok, response.Status);
             Assert.IsNotNull(result);
-            Assert.AreEqual(9, result.Rows.Count);
-            var keys = result.Rows.Cast<DataRow>().Select(row => row.ItemArray[0]).ToList();
+            Assert.AreEqual(9, result?.Rows.Count);
+            var keys = result?.Rows.Cast<DataRow>().Select(row => row.ItemArray[0]).ToList();
             CollectionAssert.Contains(keys, "T");
             CollectionAssert.Contains(keys, "CNOT");
             CollectionAssert.AreEqual(messages.Select(ChannelWithNewLines.Format).ToArray(), channel.msgs.ToArray());
@@ -92,11 +104,13 @@ namespace Tests.IQSharp
         {
             var engine = Init("Workspace.ExecutionPathTracer");
             var snippets = engine.Snippets as Snippets;
+            Assert.IsNotNull(snippets);
+            Assert.IsNotNull(engine.SymbolsResolver);
             var configSource = new ConfigurationSource(skipLoading: true);
 
-            var wsMagic = new WorkspaceMagic(snippets.Workspace);
+            var wsMagic = new WorkspaceMagic(snippets!.Workspace);
             var pkgMagic = new PackageMagic(snippets.GlobalReferences);
-            var traceMagic = new TraceMagic(engine.SymbolsResolver, configSource);
+            var traceMagic = new TraceMagic(engine.SymbolsResolver!, configSource);
 
             var channel = new MockChannel();
 
@@ -121,11 +135,11 @@ namespace Tests.IQSharp
             var content = message.Content as ExecutionPathVisualizerContent;
             Assert.IsNotNull(content);
 
-            Assert.AreEqual(expectedDepth, content.RenderDepth);
+            Assert.AreEqual(expectedDepth, content?.RenderDepth);
 
-            var path = content.ExecutionPath.ToObject<ExecutionPath>();
+            var path = content?.ExecutionPath.ToObject<ExecutionPath>();
             Assert.IsNotNull(path);
-            Assert.AreEqual(expectedPath.ToJson(), path.ToJson());
+            Assert.AreEqual(expectedPath.ToJson(), path!.ToJson());
         }
 
         [TestMethod]
@@ -139,8 +153,9 @@ namespace Tests.IQSharp
         public async Task CompileAndSimulate()
         {
             var engine = Init();
+            Assert.IsNotNull(engine.SymbolsResolver);
             var configSource = new ConfigurationSource(skipLoading: true);
-            var simMagic = new SimulateMagic(engine.SymbolsResolver, configSource);
+            var simMagic = new SimulateMagic(engine.SymbolsResolver!, configSource);
             var channel = new MockChannel();
 
             // Try running without compiling it, fails:
@@ -228,12 +243,13 @@ namespace Tests.IQSharp
         {
             var engine = Init();
             var channel = new MockChannel();
+            Assert.IsNotNull(engine.SymbolsResolver);
 
             // Compile it:
             await AssertCompile(engine, SNIPPETS.HelloQ, "HelloQ");
 
             // Run with toffoli simulator:
-            var toffoliMagic = new ToffoliMagic(engine.SymbolsResolver);
+            var toffoliMagic = new ToffoliMagic(engine.SymbolsResolver!);
             var response = await toffoliMagic.Execute("HelloQ", channel);
             var result = response.Output as Dictionary<string, double>;
             PrintResult(response, channel);
@@ -331,7 +347,9 @@ namespace Tests.IQSharp
                 Assert.AreEqual(ExecuteStatus.Ok, response.Status);
                 Assert.AreEqual(3, channel.msgs.Count);
                 Assert.AreEqual(0, channel.errors.Count);
-                Assert.AreEqual("ThreeWarnings", new ListToTextResultEncoder().Encode(response.Output).Value.Data);
+                Assert.AreEqual("ThreeWarnings",
+                    new ListToTextResultEncoder().Encode(response.Output)?.Data
+                );
             }
 
             {
@@ -341,7 +359,9 @@ namespace Tests.IQSharp
                 Assert.AreEqual(ExecuteStatus.Ok, response.Status);
                 Assert.AreEqual(1, channel.msgs.Count);
                 Assert.AreEqual(0, channel.errors.Count);
-                Assert.AreEqual("OneWarning", new ListToTextResultEncoder().Encode(response.Output).Value.Data);
+                Assert.AreEqual("OneWarning",
+                    new ListToTextResultEncoder().Encode(response.Output)?.Data
+                );
             }
         }
 
@@ -363,8 +383,9 @@ namespace Tests.IQSharp
         {
             var engine = Init();
             var snippets = engine.Snippets as Snippets;
+            Assert.IsNotNull(snippets);
 
-            var pkgMagic = new PackageMagic(snippets.GlobalReferences);
+            var pkgMagic = new PackageMagic(snippets!.GlobalReferences);
             var references = ((References)pkgMagic.References);
             var packageCount = references.AutoLoadPackages.Count;
             var channel = new MockChannel();
@@ -373,9 +394,9 @@ namespace Tests.IQSharp
             PrintResult(response, channel);
             Assert.AreEqual(ExecuteStatus.Ok, response.Status);
             Assert.AreEqual(0, channel.msgs.Count);
-            Assert.AreEqual(packageCount, result.Length);
-            Assert.AreEqual("Microsoft.Quantum.Standard::0.0.0", result[0]);
-            Assert.AreEqual("Microsoft.Quantum.Standard.Visualization::0.0.0", result[1]);
+            Assert.AreEqual(packageCount, result?.Length);
+            Assert.AreEqual("Microsoft.Quantum.Standard::0.0.0", result?[0]);
+            Assert.AreEqual("Microsoft.Quantum.Standard.Visualization::0.0.0", result?[1]);
 
             // Try compiling TrotterEstimateEnergy, it should fail due to the lack
             // of chemistry package.
@@ -389,7 +410,7 @@ namespace Tests.IQSharp
             Assert.AreEqual(ExecuteStatus.Ok, response.Status);
             Assert.AreEqual(0, channel.msgs.Count);
             Assert.IsNotNull(result);
-            Assert.AreEqual(packageCount + 1, result.Length);
+            Assert.AreEqual(packageCount + 1, result?.Length);
 
             // Now it should compile:
             await AssertCompile(engine, SNIPPETS.UseJordanWignerEncodingData, "UseJordanWignerEncodingData");
@@ -400,7 +421,8 @@ namespace Tests.IQSharp
         {
             var engine = Init();
             var snippets = engine.Snippets as Snippets;
-            var pkgMagic = new PackageMagic(snippets.GlobalReferences);
+            Assert.IsNotNull(snippets);
+            var pkgMagic = new PackageMagic(snippets!.GlobalReferences);
             var channel = new MockChannel();
 
             var response = await pkgMagic.Execute("microsoft.invalid.quantum", channel);
@@ -417,13 +439,14 @@ namespace Tests.IQSharp
         {
             var engine = Init();
             var snippets = engine.Snippets as Snippets;
-            var projectMagic = new ProjectMagic(snippets.Workspace);
+            Assert.IsNotNull(snippets);
+            var projectMagic = new ProjectMagic(snippets!.Workspace);
             var channel = new MockChannel();
 
             var response = await projectMagic.Execute("../Workspace.ProjectReferences/Workspace.ProjectReferences.csproj", channel);
             Assert.AreEqual(ExecuteStatus.Ok, response.Status);
             var loadedProjectFiles = response.Output as string[];
-            Assert.AreEqual(3, loadedProjectFiles.Length);
+            Assert.AreEqual(3, loadedProjectFiles?.Length);
         }
 
         [TestMethod]
@@ -441,9 +464,9 @@ namespace Tests.IQSharp
             var result = response.Output as string[];
             PrintResult(response, channel);
             Assert.AreEqual(ExecuteStatus.Ok, response.Status);
-            Assert.AreEqual(5, result.Length);
-            Assert.AreEqual("HelloQ", result[0]);
-            Assert.AreEqual("Tests.qss.NoOp", result[4]);
+            Assert.AreEqual(5, result?.Length);
+            Assert.AreEqual("HelloQ", result?[0]);
+            Assert.AreEqual("Tests.qss.NoOp", result?[4]);
         }
 
         [TestMethod]
@@ -451,9 +474,10 @@ namespace Tests.IQSharp
         {
             var engine = Init("Workspace.Chemistry");
             var snippets = engine.Snippets as Snippets;
+            Assert.IsNotNull(snippets);
 
-            var wsMagic = new WorkspaceMagic(snippets.Workspace);
-            var pkgMagic = new PackageMagic(snippets.GlobalReferences);
+            var wsMagic = new WorkspaceMagic(snippets!.Workspace);
+            var pkgMagic = new PackageMagic(snippets!.GlobalReferences);
 
             var channel = new MockChannel();
             var result = new string[0];
@@ -490,7 +514,7 @@ namespace Tests.IQSharp
             result = response.Output as string[];
             PrintResult(response, channel);
             Assert.AreEqual(ExecuteStatus.Ok, response.Status);
-            Assert.AreEqual(2, result.Length);
+            Assert.AreEqual(2, result?.Length);
 
             // Compilation must work:
             await AssertCompile(engine, SNIPPETS.DependsOnChemistryWorkspace, "DependsOnChemistryWorkspace");
@@ -518,26 +542,26 @@ namespace Tests.IQSharp
             // Intrinsics:
             var symbol = resolver.Resolve("X");
             Assert.IsNotNull(symbol);
-            Assert.AreEqual("Microsoft.Quantum.Intrinsic.X", symbol.Name);
+            Assert.AreEqual("Microsoft.Quantum.Intrinsic.X", symbol!.Name);
 
             // FQN Intrinsics:
             symbol = resolver.Resolve("Microsoft.Quantum.Intrinsic.X");
             Assert.IsNotNull(symbol);
-            Assert.AreEqual("Microsoft.Quantum.Intrinsic.X", symbol.Name);
+            Assert.AreEqual("Microsoft.Quantum.Intrinsic.X", symbol!.Name);
 
             // From namespace:
             symbol = resolver.Resolve("Tests.qss.CCNOTDriver");
             Assert.IsNotNull(symbol);
-            Assert.AreEqual("Tests.qss.CCNOTDriver", symbol.Name);
+            Assert.AreEqual("Tests.qss.CCNOTDriver", symbol!.Name);
 
             symbol = resolver.Resolve("CCNOTDriver");
             Assert.IsNotNull(symbol);
-            Assert.AreEqual("Tests.qss.CCNOTDriver", symbol.Name);
+            Assert.AreEqual("Tests.qss.CCNOTDriver", symbol!.Name);
 
             // Snippets:
             symbol = resolver.Resolve("HelloQ");
             Assert.IsNotNull(symbol);
-            Assert.AreEqual("HelloQ", symbol.Name);
+            Assert.AreEqual("HelloQ", symbol!.Name);
 
             // resolver is case sensitive:
             symbol = resolver.Resolve("helloq");
@@ -553,13 +577,17 @@ namespace Tests.IQSharp
         {
             var resolver = Startup.Create<MagicSymbolResolver>("Workspace.Broken");
 
+            // We use the null-forgiving operator on symbol below, as the C# 8
+            // nullable reference feature does not incorporate the result of
+            // Assert.IsNotNull.
+
             var symbol = resolver.Resolve("%workspace");
             Assert.IsNotNull(symbol);
-            Assert.AreEqual("%workspace", symbol.Name);
+            Assert.AreEqual("%workspace", symbol!.Name);
 
             symbol = resolver.Resolve("%package") as MagicSymbol;
             Assert.IsNotNull(symbol);
-            Assert.AreEqual("%package", symbol.Name);
+            Assert.AreEqual("%package", symbol!.Name);
 
             Assert.IsNotNull(resolver.Resolve("%who"));
             Assert.IsNotNull(resolver.Resolve("%estimate"));
@@ -581,93 +609,105 @@ namespace Tests.IQSharp
         [TestMethod]
         public async Task TestDebugMagic()
         {
-            var engine = Init();
-            await AssertCompile(engine, SNIPPETS.SimpleDebugOperation, "SimpleDebugOperation");
-
-            var configSource = new ConfigurationSource(skipLoading: true);
-            var debugMagic = new DebugMagic(engine.SymbolsResolver, configSource, engine.ShellRouter, engine.ShellServer, null);
-
-            // Start a debug session
-            var channel = new MockChannel();
-            var cts = new CancellationTokenSource();
-            var debugTask = debugMagic.RunAsync("SimpleDebugOperation", channel, cts.Token);
-
-            // Retrieve the debug session ID
-            var message = channel.iopubMessages[0];
-            Assert.IsNotNull(message);
-            Assert.AreEqual("iqsharp_debug_sessionstart", message.Header.MessageType);
-
-            var content = message.Content as DebugSessionContent;
-            Assert.IsNotNull(content);
-            var debugSessionId = content.DebugSession;
-
-            // Send several iqsharp_debug_advance messages
-            var debugAdvanceMessage = new Message
+            lock (debugTestLock)
             {
-                Header = new MessageHeader
+                var engine = Init();
+                Assert.IsNotNull(engine.SymbolsResolver);
+                await AssertCompile(engine, SNIPPETS.SimpleDebugOperation, "SimpleDebugOperation");
+
+                var configSource = new ConfigurationSource(skipLoading: true);
+                var debugMagic = new DebugMagic(engine.SymbolsResolver!, configSource, engine.ShellRouter, engine.ShellServer, null);
+
+                // Start a debug session
+                var channel = new MockChannel();
+                var cts = new CancellationTokenSource();
+                var debugTask = debugMagic.RunAsync("SimpleDebugOperation", channel, cts.Token);
+
+                // Retrieve the debug session ID
+                var message = channel.iopubMessages[0];
+                Assert.IsNotNull(message);
+                Assert.AreEqual("iqsharp_debug_sessionstart", message.Header.MessageType);
+
+                var content = message.Content as DebugSessionContent;
+                Assert.IsNotNull(content);
+                var debugSessionId = content!.DebugSession;
+
+                // Send several iqsharp_debug_advance messages
+                var debugAdvanceMessage = new Message
                 {
-                    MessageType = "iqsharp_debug_advance"
-                },
-                Content = new UnknownContent
-                {
-                    Data = new Dictionary<string, object>
+                    Header = new MessageHeader
                     {
-                        ["debug_session"] = debugSessionId
+                        MessageType = "iqsharp_debug_advance"
+                    },
+                    Content = new UnknownContent
+                    {
+                        Data = new Dictionary<string, object>
+                        {
+                            ["debug_session"] = debugSessionId
+                        }
                     }
+                };
+
+                foreach (int _ in Enumerable.Range(0, 1000))
+                {
+                    Thread.Sleep(millisecondsTimeout: 10);
+                    if (debugTask.IsCompleted)
+                        break;
+
+                    await debugMagic.HandleAdvanceMessage(debugAdvanceMessage);
                 }
-            };
 
-            foreach (int _ in Enumerable.Range(0, 1000))
-            {
-                Thread.Sleep(millisecondsTimeout: 10);
-                if (debugTask.IsCompleted)
-                    break;
+                // Verify that the command completes successfully
+                Assert.IsTrue(debugTask.IsCompleted);
+                Assert.AreEqual(System.Threading.Tasks.TaskStatus.RanToCompletion, debugTask.Status);
 
-                await debugMagic.HandleAdvanceMessage(debugAdvanceMessage);
+                // Ensure that expected messages were sent
+                Assert.AreEqual("iqsharp_debug_sessionstart", channel.iopubMessages[0].Header.MessageType);
+                Assert.AreEqual("iqsharp_debug_opstart", channel.iopubMessages[1].Header.MessageType);
+                Assert.AreEqual("iqsharp_debug_sessionend", channel.iopubMessages.Last().Header.MessageType);
+                Assert.IsTrue(channel.msgs[0].Contains("Starting debug session"));
+                Assert.IsTrue(channel.msgs[1].Contains("Finished debug session"));
+
+                // Verify debug status content
+                var debugStatusContent = channel.iopubMessages[1].Content as DebugStatusContent;
+                Assert.IsNotNull(debugStatusContent?.State);
+                Assert.AreEqual(debugSessionId, debugStatusContent?.DebugSession);
             }
-
-            // Verify that the command completes successfully
-            Assert.IsTrue(debugTask.IsCompleted);
-            Assert.AreEqual(System.Threading.Tasks.TaskStatus.RanToCompletion, debugTask.Status);
-
-            // Ensure that expected messages were sent
-            Assert.AreEqual("iqsharp_debug_sessionstart", channel.iopubMessages[0].Header.MessageType);
-            Assert.AreEqual("iqsharp_debug_opstart", channel.iopubMessages[1].Header.MessageType);
-            Assert.AreEqual("iqsharp_debug_sessionend", channel.iopubMessages.Last().Header.MessageType);
-            Assert.IsTrue(channel.msgs[0].Contains("Starting debug session"));
-            Assert.IsTrue(channel.msgs[1].Contains("Finished debug session"));
-
-            // Verify debug status content
-            var debugStatusContent = channel.iopubMessages[1].Content as DebugStatusContent;
-            Assert.IsNotNull(debugStatusContent.State);
-            Assert.AreEqual(debugSessionId, debugStatusContent.DebugSession);
         }
 
         [TestMethod]
         public async Task TestDebugMagicCancel()
         {
-            var engine = Init();
-            await AssertCompile(engine, SNIPPETS.SimpleDebugOperation, "SimpleDebugOperation");
+            lock (debugTestLock)
+            {
+                var engine = Init();
+                // Since Init guarantees that engine services have started, we
+                // assert non-nullness here.
+                Assert.IsNotNull(engine.SymbolsResolver);
+                await AssertCompile(engine, SNIPPETS.SimpleDebugOperation, "SimpleDebugOperation");
 
-            var configSource = new ConfigurationSource(skipLoading: true);
-            var debugMagic = new DebugMagic(engine.SymbolsResolver, configSource, engine.ShellRouter, engine.ShellServer, null);
+                var configSource = new ConfigurationSource(skipLoading: true);
+                // We asserted that SymbolsResolver is not null above, and can use
+                // the null-forgiving operator here as a result.
+                var debugMagic = new DebugMagic(engine.SymbolsResolver!, configSource, engine.ShellRouter, engine.ShellServer, null);
 
-            // Start a debug session
-            var channel = new MockChannel();
-            var cts = new CancellationTokenSource();
-            var debugTask = debugMagic.RunAsync("SimpleDebugOperation", channel, cts.Token);
+                // Start a debug session
+                var channel = new MockChannel();
+                var cts = new CancellationTokenSource();
+                var debugTask = debugMagic.RunAsync("SimpleDebugOperation", channel, cts.Token);
 
-            // Cancel the session
-            cts.Cancel();
+                // Cancel the session
+                cts.Cancel();
 
-            // Ensure that the task throws an exception
-            Assert.ThrowsException<AggregateException>(() => debugTask.Wait());
+                // Ensure that the task throws an exception
+                Assert.ThrowsException<AggregateException>(() => debugTask.Wait());
 
-            // Ensure that expected messages were sent
-            Assert.AreEqual("iqsharp_debug_sessionstart", channel.iopubMessages[0].Header.MessageType);
-            Assert.AreEqual("iqsharp_debug_sessionend", channel.iopubMessages[1].Header.MessageType);
-            Assert.IsTrue(channel.msgs[0].Contains("Starting debug session"));
-            Assert.IsTrue(channel.msgs[1].Contains("Finished debug session"));
+                // Ensure that expected messages were sent
+                Assert.AreEqual("iqsharp_debug_sessionstart", channel.iopubMessages[0].Header.MessageType);
+                Assert.AreEqual("iqsharp_debug_sessionend", channel.iopubMessages[1].Header.MessageType);
+                Assert.IsTrue(channel.msgs[0].Contains("Starting debug session"));
+                Assert.IsTrue(channel.msgs[1].Contains("Finished debug session"));
+            }
         }
 
         [TestMethod]
